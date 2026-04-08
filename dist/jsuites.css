@@ -1088,7 +1088,7 @@ div[data-before]:before {
     position: absolute;
 }
 
-.jcontextmenu > div:hover > .jcontextmenu {
+.jcontextmenu > div.jcontextsubmenu-open > .jcontextmenu {
     display: block;
     opacity: 1;
     -webkit-transform: translate(0, 0) scale(1);

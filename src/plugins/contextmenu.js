@@ -12,6 +12,7 @@ function Contextmenu() {
         var defaults = {
             items: null,
             onclick: null,
+            submenuOpenOn: 'hover',
         };
 
         // Loop through our object
@@ -100,6 +101,11 @@ function Contextmenu() {
         obj.close = function () {
             if (el.classList.contains('jcontextmenu-focus')) {
                 el.classList.remove('jcontextmenu-focus');
+            }
+            // Close any open click-triggered submenus
+            var openSubs = el.querySelectorAll('.jcontextsubmenu-open');
+            for (var i = 0; i < openSubs.length; i++) {
+                openSubs[i].classList.remove('jcontextsubmenu-open');
             }
             Tracking(obj, false);
         }
@@ -211,11 +217,12 @@ function Contextmenu() {
 
                     itemContainer.appendChild(el_submenu);
 
-                    itemContainer.addEventListener('mouseenter', function () {
+                    var positionSubmenu = function () {
                         el_submenu.style.left = '';
                         el_submenu.style.right = '';
                         el_submenu.style.top = '';
                         el_submenu.style.minWidth = itemContainer.offsetWidth + 'px';
+                        itemContainer.classList.add('jcontextsubmenu-open');
 
                         // Temporarily show submenu to measure
                         el_submenu.style.display = 'block';
@@ -255,15 +262,40 @@ function Contextmenu() {
                         el_submenu.style.opacity = '';
                         el_submenu.style.pointerEvents = '';
                         el_submenu.style.display = '';
-                    });
+                    };
 
-                    // Also reset submenu position on mouseleave to avoid stale styles
-                    itemContainer.addEventListener('mouseleave', function () {
+                    var resetSubmenu = function () {
                         el_submenu.style.left = '';
                         el_submenu.style.right = '';
                         el_submenu.style.top = '';
                         el_submenu.style.minWidth = '';
-                    });
+                        itemContainer.classList.remove('jcontextsubmenu-open');
+                    };
+
+                    if (obj.options.submenuOpenOn === 'click') {
+                        itemContainer.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            var isOpen = itemContainer.classList.contains('jcontextsubmenu-open');
+
+                            // Close any other open submenus at the same level
+                            var siblings = itemContainer.parentNode.querySelectorAll('.jcontextsubmenu-open');
+                            for (var s = 0; s < siblings.length; s++) {
+                                siblings[s].classList.remove('jcontextsubmenu-open');
+                            }
+
+                            if (!isOpen) {
+                                positionSubmenu();
+                            } else {
+                                resetSubmenu();
+                            }
+                        });
+                    } else {
+                        itemContainer.addEventListener('mouseenter', positionSubmenu);
+
+                        // Also reset submenu position on mouseleave to avoid stale styles
+                        itemContainer.addEventListener('mouseleave', resetSubmenu);
+                    }
                 } else if (item.shortcut) {
                     var itemShortCut = document.createElement('span');
                     itemShortCut.innerHTML = item.shortcut;

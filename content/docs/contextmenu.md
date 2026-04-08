@@ -16,10 +16,11 @@ Introducing the jSuites context menu, a dynamic JavaScript plugin designed to en
 
 ### Initialization Options
 
-| Property                  | Description                                        |
-|---------------------------|----------------------------------------------------|
-| `items: Array of objects` | Array of item object descriptions.                 |
-| `onclick: function`       | Global onclick event. `function(instance, event)`  |
+| Property                  | Description                                                                                   |
+|---------------------------|-----------------------------------------------------------------------------------------------|
+| `items: Array of objects` | Array of item object descriptions.                                                            |
+| `onclick: function`       | Global onclick event. `function(instance, event)`                                             |
+| `submenuOpenOn: string`   | Defines how submenus are triggered. Use `hover` (default) for mouse over or `click` for click.|
 
 
 ### Item options

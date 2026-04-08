@@ -33,6 +33,8 @@ declare namespace Component {
         items: Items[],
         /** General onclick handler */
         onclick: null,
+        /** Defines how submenus are triggered. Default: 'hover' */
+        submenuOpenOn?: 'hover' | 'click',
     }
 
     interface Instance {

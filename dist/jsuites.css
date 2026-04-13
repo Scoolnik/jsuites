@@ -3423,22 +3423,6 @@ body.lm-dark-mode {
     .lm-column .lm-form-group {
         padding: 0;
     }
-
-    ::placeholder {
-        text-transform: uppercase;
-    }
-
-    ::-webkit-input-placeholder {
-        text-transform: uppercase;
-    }
-
-    :-moz-placeholder {
-        text-transform: uppercase;
-    }
-
-    :-ms-input-placeholder {
-        text-transform: uppercase;
-    }
 }
 
 .lm-calendar {

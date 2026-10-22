@@ -114,7 +114,7 @@
 
         component.dateToNum = function (jsDate) {
             if (typeof jsDate === 'string') {
-                jsDate = new Date(jsDate + '  GMT+0');
+                jsDate = new Date(jsDate.trim().replace(' ', 'T') + 'Z');
             }
             let jsDateInMilliseconds = jsDate.getTime();
             if (jsDateInMilliseconds >= excelLeapYearBug) {
@@ -2307,6 +2307,10 @@
                             mask = d[3];
                         }
                     }
+
+                    // Section chosen for this value, so a later pass over its
+                    // rendered string does not choose again
+                    control.section = mask;
                 }
 
                 // Transform Excel locale patterns (e.g., [$$-409]#,##0.00) - only if pattern exists
@@ -2668,7 +2672,15 @@
             if (control.caret) {
                 let index = control.caret.index;
                 let position = control.caret.position;
-                let value = control.values[index] ?? '';
+                let value = String(control.values[index] ?? '');
+                // Percent masks bake '%' into the same value slot as the number.
+                // If the captured caret landed after the trailing '%', move it
+                // before so it sits right after the digit — matching how text-
+                // suffix masks like '0 liters' position the cursor.
+                if (control.methods[index] && control.methods[index].type === 'percentage'
+                    && position > 0 && value.charAt(position - 1) === '%') {
+                    position--;
+                }
                 // Re-apply the caret to the original position
                 control.values[index] = value.substring(0, position) + hiddenCaret + value.substring(position);
             }
@@ -2738,6 +2750,11 @@
 
         const autoCastingDates = function(value) {
             if (!value || typeof value !== 'string') {
+                return null;
+            }
+
+            // Every date or time shape carries a digit: plain text never reaches the parsers
+            if (!/\d/.test(value)) {
                 return null;
             }
 
@@ -2899,6 +2916,10 @@
 
             // If no patterns detected, try some common formats as fallback
             if (candidateMasks.length === 0) {
+                // Every fallback format separates digit groups with /, - or :
+                if (!/\d[\/\-:]\d/.test(value)) {
+                    return null;
+                }
                 if (userLocale.startsWith('en-US')) {
                     candidateMasks.push(
                         'mm/dd/yyyy', 'mm-dd-yyyy', 'yyyy-mm-dd',
@@ -3681,8 +3702,13 @@
                     }
                 }
 
-                // Process mask
-                let control = Component(value, options, true);
+                // Process mask. The section of a multi-section mask was chosen
+                // from the original value above: the localized string keeps it
+                let sectionOptions = options;
+                if (typeof(config.section) !== 'undefined') {
+                    sectionOptions = typeof(options) === 'string' ? config.section : Object.assign({}, options, { mask: config.section });
+                }
+                let control = Component(value, sectionOptions, true);
                 // Complement render
                 if (fullMask) {
                     processNumOfPaddingZeros(control);

@@ -127,7 +127,7 @@ var jSuites;
 
         component.dateToNum = function (jsDate) {
             if (typeof jsDate === 'string') {
-                jsDate = new Date(jsDate + '  GMT+0');
+                jsDate = new Date(jsDate.trim().replace(' ', 'T') + 'Z');
             }
             let jsDateInMilliseconds = jsDate.getTime();
             if (jsDateInMilliseconds >= excelLeapYearBug) {
@@ -933,7 +933,7 @@ var jSuites;
 
             if (!localeData) {
                 // Unknown locale - fallback: strip ALL patterns, use literal symbol (or $)
-                const fallbackSymbol = symbolChar || '$';
+                const fallbackSymbol = symbolChar || '';
                 // Replace all occurrences of the pattern with the symbol
                 return mask.replace(/\[\$(.?)-([0-9A-Z]+)\]/gi, fallbackSymbol);
             }
@@ -2320,6 +2320,10 @@ var jSuites;
                             mask = d[3];
                         }
                     }
+
+                    // Section chosen for this value, so a later pass over its
+                    // rendered string does not choose again
+                    control.section = mask;
                 }
 
                 // Transform Excel locale patterns (e.g., [$$-409]#,##0.00) - only if pattern exists
@@ -2681,7 +2685,15 @@ var jSuites;
             if (control.caret) {
                 let index = control.caret.index;
                 let position = control.caret.position;
-                let value = control.values[index] ?? '';
+                let value = String(control.values[index] ?? '');
+                // Percent masks bake '%' into the same value slot as the number.
+                // If the captured caret landed after the trailing '%', move it
+                // before so it sits right after the digit — matching how text-
+                // suffix masks like '0 liters' position the cursor.
+                if (control.methods[index] && control.methods[index].type === 'percentage'
+                    && position > 0 && value.charAt(position - 1) === '%') {
+                    position--;
+                }
                 // Re-apply the caret to the original position
                 control.values[index] = value.substring(0, position) + hiddenCaret + value.substring(position);
             }
@@ -2751,6 +2763,11 @@ var jSuites;
 
         const autoCastingDates = function(value) {
             if (!value || typeof value !== 'string') {
+                return null;
+            }
+
+            // Every date or time shape carries a digit: plain text never reaches the parsers
+            if (!/\d/.test(value)) {
                 return null;
             }
 
@@ -2912,6 +2929,10 @@ var jSuites;
 
             // If no patterns detected, try some common formats as fallback
             if (candidateMasks.length === 0) {
+                // Every fallback format separates digit groups with /, - or :
+                if (!/\d[\/\-:]\d/.test(value)) {
+                    return null;
+                }
                 if (userLocale.startsWith('en-US')) {
                     candidateMasks.push(
                         'mm/dd/yyyy', 'mm-dd-yyyy', 'yyyy-mm-dd',
@@ -3694,8 +3715,13 @@ var jSuites;
                     }
                 }
 
-                // Process mask
-                let control = Component(value, options, true);
+                // Process mask. The section of a multi-section mask was chosen
+                // from the original value above: the localized string keeps it
+                let sectionOptions = options;
+                if (typeof(config.section) !== 'undefined') {
+                    sectionOptions = typeof(options) === 'string' ? config.section : Object.assign({}, options, { mask: config.section });
+                }
+                let control = Component(value, sectionOptions, true);
                 // Complement render
                 if (fullMask) {
                     processNumOfPaddingZeros(control);
@@ -4145,6 +4171,9 @@ const Mask = utils.Mask;
         let data = {};
         if (Array.isArray(this.data)) {
             this.data.map(function (v) {
+                if (!v || typeof v !== 'object' || typeof v.date !== 'string') {
+                    return;
+                }
                 let d = year + '-' + Helpers.two(month + 1);
                 if (v.date.substring(0, 7) === d) {
                     if (!data[v.date]) {
@@ -4373,8 +4402,13 @@ const Mask = utils.Mask;
         let change = self.onchange;
         self.onchange = null;
 
+        // Coerce startingDay to a number so string inputs ('1') don't trigger string concat in modulo math
+        if (typeof self.startingDay !== 'number') {
+            self.startingDay = Number(self.startingDay) || 0;
+        }
+
         // Weekdays
-        self.weekdays = getWeekdays(self.startingDay ?? 0);
+        self.weekdays = getWeekdays(self.startingDay);
 
         // Cursor
         self.cursor = {};
@@ -4462,6 +4496,10 @@ const Mask = utils.Mask;
         const setValue = function(v) {
             let d = new Date();
             if (v) {
+                // Accept native Date objects by converting to ISO string
+                if (v instanceof Date) {
+                    v = v.toISOString().substring(0, 10);
+                }
                 if (isTrue(self.range)) {
                     if (v) {
                         if (! Array.isArray(v)) {
@@ -4590,6 +4628,9 @@ const Mask = utils.Mask;
         }
 
         const select = function(e, s) {
+            if (self.disabled === true) {
+                return;
+            }
             // Get new date content
             let d = updateDate(s.value, getPosition());
             // New date
@@ -4781,11 +4822,17 @@ const Mask = utils.Mask;
         }
 
         const normalize = function(v) {
+            if (v instanceof Date) {
+                v = Helpers.dateToString ? Helpers.dateToString(v) : v.toISOString().substring(0, 10);
+            }
             if (! Array.isArray(v)) {
                 v = v.toString().split(',');
             }
 
             return v.map(item => {
+                if (item instanceof Date) {
+                    return Helpers.dateToString ? Helpers.dateToString(item) : item.toISOString().substring(0, 10);
+                }
                 if (Number(item) == item) {
                     return Helpers.numToDate(item);
                 } else {
@@ -5094,7 +5141,10 @@ const Mask = utils.Mask;
             if (prop === 'view') {
                 reloadView(true);
             } else if (prop === 'startingDay') {
-                self.weekdays = getWeekdays(self.startingDay ?? 0);
+                if (typeof self.startingDay !== 'number') {
+                    self.startingDay = Number(self.startingDay) || 0;
+                }
+                self.weekdays = getWeekdays(self.startingDay);
             } else if (prop === 'value') {
                 dispatchOnChangeEvent();
             }
@@ -6123,8 +6173,9 @@ if (! Modal && "function" === 'function') {
             }
             // Focus
             self.el.classList.add('lm-menu-focus');
-            // Focus on the contextmenu
-            self.el.focus();
+            // Focus on the contextmenu. preventScroll stops the browser from
+            // scrolling this in-flow element into view, which would jump the page
+            self.el.focus({ preventScroll: true });
         }
 
         self.close = function(level) {
@@ -6162,6 +6213,16 @@ if (! Modal && "function" === 'function') {
                     self.close(0);
                 }
             });
+
+            // Any scroll outside the menu closes it (matches the OS context menu:
+            // the menu refers to the spot that was right-clicked, and scrolling
+            // moves that content away). Capture phase: scroll does not bubble.
+            // Scrolling INSIDE a long menu list keeps it open
+            window.addEventListener("scroll", function(e) {
+                if (! self.isClosed() && ! (e.target instanceof Node && self.el.contains(e.target))) {
+                    self.close(0);
+                }
+            }, true);
 
             // Keyboard event
             self.el.addEventListener("keydown", function(e) {
@@ -7442,6 +7503,11 @@ if (!Modal && "function" === 'function') {
         onchange(prop => {
             if (prop === 'value') {
                 setValue(self.value);
+            } else if (prop === 'rows') {
+                // The number of results changes the modal height, so the position needs to be recalculated
+                if (self.modal && typeof (self.modal.refreshPosition) === 'function') {
+                    self.modal.refreshPosition();
+                }
             } else if (prop === 'data') {
                 // Store current value before resetting data
                 let currentValue = self.value;
@@ -7528,7 +7594,7 @@ if (!lemonade && "function" === 'function') {
 
 ;(function (global, factory) {
      true ? module.exports = factory() :
-    0;
+        0;
 }(this, (function () {
 
     class CustomEvents extends Event {
@@ -7542,7 +7608,7 @@ if (!lemonade && "function" === 'function') {
             if (props) {
                 for (const key in props) {
                     // Avoid assigning if property already exists anywhere on `this`
-                    if (! (key in this)) {
+                    if (!(key in this)) {
                         this[key] = props[key];
                     }
                 }
@@ -7551,7 +7617,7 @@ if (!lemonade && "function" === 'function') {
     }
 
     // Dispatcher
-    const Dispatch = function(method, type, options) {
+    const Dispatch = function (method, type, options) {
         // Try calling the method directly if provided
         if (typeof method === 'function') {
             let a = Object.values(options);
@@ -7578,7 +7644,7 @@ if (!lemonade && "function" === 'function') {
      * Send the modal to the front
      * @param container
      */
-    const sendToFront = function(container) {
+    const sendToFront = function (container) {
         let highestXIndex = defaultZIndex;
         for (let i = 0; i < modals.length; i++) {
             const zIndex = parseInt(modals[i].el.style.zIndex);
@@ -7593,12 +7659,12 @@ if (!lemonade && "function" === 'function') {
      * Send modal to the back
      * @param container
      */
-    const sendToBack = function(container) {
+    const sendToBack = function (container) {
         container.style.zIndex = defaultZIndex;
     }
 
     // Get the coordinates of the action
-    const getCoords = function(e) {
+    const getCoords = function (e) {
         let x;
         let y;
 
@@ -7610,11 +7676,11 @@ if (!lemonade && "function" === 'function') {
             y = e.clientY;
         }
 
-        return [x,y];
+        return [x, y];
     }
 
     // Get the button status
-    const getButton = function(e) {
+    const getButton = function (e) {
         e = e || window.event;
         if (e.buttons) {
             return e.buttons;
@@ -7626,12 +7692,12 @@ if (!lemonade && "function" === 'function') {
     }
 
     // Finalize any potential action
-    const mouseUp = function(e) {
+    const mouseUp = function (e) {
         // Finalize all actions
-        if (typeof(controls.action) === 'function') {
+        if (typeof (controls.action) === 'function') {
             controls.action();
         }
-        setTimeout(function() {
+        setTimeout(function () {
             // Remove cursor
             if (controls.e) {
                 controls.e.style.cursor = '';
@@ -7646,12 +7712,12 @@ if (!lemonade && "function" === 'function') {
         }, 0)
     }
 
-    const mouseMove = function(e) {
-        if (! getButton(e)) {
+    const mouseMove = function (e) {
+        if (!getButton(e)) {
             return false;
         }
         // Get mouse coordinates
-        let [x,y] = getCoords(e);
+        let [x, y] = getCoords(e);
 
         // Move modal
         if (controls.type === 'move') {
@@ -7687,7 +7753,7 @@ if (!lemonade && "function" === 'function') {
                 if (e.shiftKey) {
                     height = controls.h + (x - controls.x) * (controls.h / controls.w);
                 }
-            } else if (controls.d === 'w-resize' || controls.d === 'nw-resize'|| controls.d === 'sw-resize') {
+            } else if (controls.d === 'w-resize' || controls.d === 'nw-resize' || controls.d === 'sw-resize') {
                 left = controls.l + (x - controls.x);
                 // Do not move further
                 if (left >= controls.l) {
@@ -7702,7 +7768,7 @@ if (!lemonade && "function" === 'function') {
             }
 
             if (controls.d === 's-resize' || controls.d === 'se-resize' || controls.d === 'sw-resize') {
-                if (! height) {
+                if (!height) {
                     height = controls.h + (y - controls.y);
                 }
             } else if (controls.d === 'n-resize' || controls.d === 'ne-resize' || controls.d === 'nw-resize') {
@@ -7730,16 +7796,16 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    if (typeof(document) !== "undefined") {
+    if (typeof (document) !== "undefined") {
         document.addEventListener('mouseup', mouseUp);
         document.addEventListener('mousemove', mouseMove);
     }
 
-    const isTrue = function(e) {
+    const isTrue = function (e) {
         return e === true || e === 1 || e === 'true';
     }
 
-    const refreshMinimized = function() {
+    const refreshMinimized = function () {
         let items = minimizedModals;
         let numOfItems = items.length;
         let width = 10;
@@ -7759,7 +7825,7 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    const delayAction = function(self, action) {
+    const delayAction = function (self, action) {
         // Make sure to remove the transformation before minimize to preserve the animation
         if (self.el.style.marginLeft || self.el.style.marginTop) {
             // Make sure no animation during this process
@@ -7767,18 +7833,18 @@ if (!lemonade && "function" === 'function') {
             // Remove adjustment
             removeMargin(self);
             // Make sure to continue with minimize
-            setTimeout(function() {
+            setTimeout(function () {
                 // Remove class
                 self.el.classList.remove('action');
                 // Call action
                 action(self);
-            },0)
+            }, 0)
 
             return true;
         }
     }
 
-    const setMini = function(self) {
+    const setMini = function (self) {
         if (delayAction(self, setMini)) {
             return;
         }
@@ -7789,10 +7855,10 @@ if (!lemonade && "function" === 'function') {
         self.el.top = self.el.offsetTop;
         self.el.left = self.el.offsetLeft;
 
-        if (! self.el.style.top) {
+        if (!self.el.style.top) {
             self.el.style.top = self.el.top + 'px';
         }
-        if (! self.el.style.left) {
+        if (!self.el.style.left) {
             self.el.style.left = self.el.left + 'px';
         }
 
@@ -7800,13 +7866,13 @@ if (!lemonade && "function" === 'function') {
         self.el.translateX = 0;
 
         // Refresh positions
-        setTimeout(function() {
+        setTimeout(function () {
             refreshMinimized();
             self.minimized = true;
-        },10)
+        }, 10)
     }
 
-    const removeMini = function(self) {
+    const removeMini = function (self) {
         minimizedModals.splice(minimizedModals.indexOf(self), 1);
         self.minimized = false;
         self.el.style.top = self.el.top + 'px';
@@ -7826,7 +7892,7 @@ if (!lemonade && "function" === 'function') {
         }, 400);
     }
 
-    const removeMargin = function(self) {
+    const removeMargin = function (self) {
         if (self.el.style.marginLeft) {
             let y = self.el.offsetLeft;
             self.el.style.marginLeft = '';
@@ -7840,8 +7906,8 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    const adjustHorizontal = function(self) {
-        if (! isTrue(self['auto-adjust'])) {
+    const adjustHorizontal = function (self) {
+        if (!isTrue(self['auto-adjust'])) {
             return false;
         }
 
@@ -7883,8 +7949,8 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    const adjustVertical = function(self) {
-        if (! isTrue(self['auto-adjust'])) {
+    const adjustVertical = function (self) {
+        if (!isTrue(self['auto-adjust'])) {
             return false;
         }
 
@@ -7929,7 +7995,7 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    const removeElements = function(root) {
+    const removeElements = function (root) {
         // Keep the DOM elements
         let elements = [];
         if (root) {
@@ -7941,7 +8007,7 @@ if (!lemonade && "function" === 'function') {
         return elements;
     }
 
-    const appendElements = function(root, elements) {
+    const appendElements = function (root, elements) {
         if (elements && elements.length) {
             while (elements[0]) {
                 root.appendChild(elements.shift());
@@ -7949,7 +8015,7 @@ if (!lemonade && "function" === 'function') {
         }
     }
 
-    const Modal = function (template, { onchange, onload, track }) {
+    const Modal = function (template, {onchange, onload, track}) {
         let self = this;
         let backdrop = null;
         let elements = null;
@@ -7964,7 +8030,7 @@ if (!lemonade && "function" === 'function') {
         }
 
         // Make sure keep the state as boolean
-        self.closed = !! self.closed;
+        self.closed = !!self.closed;
 
         // Keep all modals references
         modals.push(self);
@@ -7978,9 +8044,9 @@ if (!lemonade && "function" === 'function') {
 
         let ignoreEvents = false;
 
-        const click = function(e) {
+        const click = function (e) {
             if (e.target.classList.contains('lm-modal-close')) {
-                self.close({ origin: 'button' });
+                self.close({origin: 'button'});
             }
 
             if (e.target.classList.contains('lm-modal-minimize')) {
@@ -7993,13 +8059,13 @@ if (!lemonade && "function" === 'function') {
             }
         }
 
-        const mousemove = function(e) {
+        const mousemove = function (e) {
             if (getButton(e)) {
                 return;
             }
 
             // Get mouse coordinates
-            let [x,y] = getCoords(e);
+            let [x, y] = getCoords(e);
             // Root element of the component
             let item = self.el;
             // Get the position and dimensions
@@ -8065,10 +8131,10 @@ if (!lemonade && "function" === 'function') {
             }
         }
 
-        const mousedown = function(e) {
-            if (! self.minimized) {
+        const mousedown = function (e) {
+            if (!self.minimized) {
                 // Get mouse coordinates
-                let [x,y] = getCoords(e);
+                let [x, y] = getCoords(e);
                 controls.x = x;
                 controls.y = y;
                 // Root element of the component
@@ -8083,10 +8149,10 @@ if (!lemonade && "function" === 'function') {
                 // If is not minimized
                 if (controls.type === 'resize') {
                     // Make sure the width and height is defined for the modal
-                    if (! item.style.width) {
+                    if (!item.style.width) {
                         item.style.width = controls.w + 'px';
                     }
-                    if (! item.style.height) {
+                    if (!item.style.height) {
                         item.style.height = controls.h + 'px';
                     }
                     // This will be the callback when finalize the resize
@@ -8122,15 +8188,15 @@ if (!lemonade && "function" === 'function') {
             }
         }
 
-        self.back = function() {
+        self.back = function () {
             sendToBack(self.el);
         }
 
-        self.front = function() {
+        self.front = function () {
             sendToFront(self.el);
         }
 
-        self.open = function() {
+        self.open = function () {
             if (self.closed === true) {
                 self.closed = false;
                 // Close event
@@ -8140,7 +8206,7 @@ if (!lemonade && "function" === 'function') {
             }
         }
 
-        self.close = function(options) {
+        self.close = function (options) {
             if (self.closed === false) {
                 self.closed = true;
                 // Close event
@@ -8151,17 +8217,32 @@ if (!lemonade && "function" === 'function') {
             }
         }
 
-        self.isClosed = function() {
+        self.isClosed = function () {
             return self.closed;
         }
 
-        if (! template || typeof(template) !== 'string') {
+        /**
+         * Recalculate the auto-adjust position when the modal dimensions change,
+         * since the margin compensation depends on the current size of the modal.
+         * NOTE: cannot be named refresh, since lemonade registers its own refresh on self
+         */
+        self.refreshPosition = function () {
+            if (self.closed === false) {
+                // Auto adjust
+                queueMicrotask(() => {
+                    adjustHorizontal(self);
+                    adjustVertical(self);
+                });
+            }
+        }
+
+        if (!template || typeof (template) !== 'string') {
             template = '';
         }
 
         // Custom Root Configuration
         self.settings = {
-            getRoot: function() {
+            getRoot: function () {
                 return self.root;
             }
         }
@@ -8219,7 +8300,7 @@ if (!lemonade && "function" === 'function') {
                 backdrop = document.createElement('div');
                 backdrop.classList.add('lm-modal-backdrop');
                 backdrop.addEventListener('click', () => {
-                    self.close({ origin: 'backdrop' });
+                    self.close({origin: 'backdrop'});
                 });
 
                 if (self.closed === false) {
@@ -8229,18 +8310,18 @@ if (!lemonade && "function" === 'function') {
 
             // Import content from DOM
             if (self.content) {
-                if (typeof(self.content) === 'string') {
+                if (typeof (self.content) === 'string') {
                     template = self.content;
-                } else if (typeof(self.content) === 'object' && self.content.tagName) {
+                } else if (typeof (self.content) === 'object' && self.content.tagName) {
                     self.root.appendChild(self.content);
                 }
             }
 
             // Focus out of the component
-            self.el.addEventListener('focusout', function(e) {
-                if (! self.el.contains(e.relatedTarget)) {
+            self.el.addEventListener('focusout', function (e) {
+                if (!self.el.contains(e.relatedTarget)) {
                     if (isTrue(self['auto-close'])) {
-                        self.close({ origin: 'focusout' });
+                        self.close({origin: 'focusout'});
                     }
                     // Remove focus
                     self.el.classList.remove('lm-modal-focus');
@@ -8248,7 +8329,7 @@ if (!lemonade && "function" === 'function') {
             });
 
             // Focus out of the component
-            self.el.addEventListener('focusin', function(e) {
+            self.el.addEventListener('focusin', function (e) {
                 self.el.classList.add('lm-modal-focus');
             });
 
@@ -8256,7 +8337,7 @@ if (!lemonade && "function" === 'function') {
             self.el.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     if (self.closed === false) {
-                        self.close({ origin: 'escape' });
+                        self.close({origin: 'escape'});
                         e.preventDefault();
                         e.stopImmediatePropagation();
                     }
@@ -8273,7 +8354,7 @@ if (!lemonade && "function" === 'function') {
                     .then(response => response.clone().body)
                     .then(body => {
                         let reader = body.getReader();
-                        reader.read().then(({ done, value }) => {
+                        reader.read().then(({done, value}) => {
                             // Add HTML to the modal
                             self.root.innerHTML = new TextDecoder().decode(value.buffer);
                             // Call onload event
@@ -8344,10 +8425,10 @@ if (!lemonade && "function" === 'function') {
                         self.left = '';
                     }
                 } else {
-                    if (! self.top) {
+                    if (!self.top) {
                         self.top = (window.innerHeight - self.el.offsetHeight) / 2;
                     }
-                    if (! self.left) {
+                    if (!self.left) {
                         self.left = (window.innerWidth - self.el.offsetWidth) / 2;
                     }
                 }
@@ -8366,7 +8447,7 @@ if (!lemonade && "function" === 'function') {
     }
 
     const Component = function (root, options) {
-        if (typeof(root) === 'object') {
+        if (typeof (root) === 'object') {
             // Remove elements from the DOM
             let elements = removeElements(root);
             // Create the modal
@@ -8381,7 +8462,7 @@ if (!lemonade && "function" === 'function') {
     }
 
     // Create LemonadeJS Component
-    lemonade.setComponents({ Modal: Modal });
+    lemonade.setComponents({Modal: Modal});
     // Create Web Component
     lemonade.createWebComponent('modal', Modal)
 
@@ -17336,7 +17417,7 @@ function Dropdown() {
                 ajax(o);
             } else {
                 // Search terms
-                str = new RegExp(str, 'gi');
+                str = new RegExp(str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
 
                 // Reset search
                 var results = [];
@@ -18748,7 +18829,11 @@ function Toolbar(el, options) {
 
     obj.refresh = function() {
         if (obj.options.responsive == true) {
-            // Width of the c
+            // A toolbar destroyed before the scheduled refresh runs has no parent
+            if (! el.parentNode) {
+                return;
+            }
+            // Width of the container
             var rect = el.parentNode.getBoundingClientRect();
             if (! obj.options.maxWidth) {
                 obj.options.maxWidth = rect.width;
@@ -20504,24 +20589,28 @@ function Validations() {
         },
     }
 
+    const toLowerCase = function(value) {
+        return typeof value === 'string' ? value.toLowerCase() : value;
+    }
+
     const textCriterias = {
         'contains': function(value, range) {
-            return value.includes(range[0]);
+            return toLowerCase(value).includes(toLowerCase(range[0]));
         },
         'not contains': function(value, range) {
-            return !value.includes(range[0]);
+            return !toLowerCase(value).includes(toLowerCase(range[0]));
         },
         'begins with': function(value, range) {
-            return value.startsWith(range[0]);
+            return toLowerCase(value).startsWith(toLowerCase(range[0]));
         },
         'ends with': function(value, range) {
-            return value.endsWith(range[0]);
+            return toLowerCase(value).endsWith(toLowerCase(range[0]));
         },
         '=': function(value, range) {
-            return value === range[0];
+            return toLowerCase(value) === toLowerCase(range[0]);
         },
         '!=': function(value, range) {
-            return value !== range[0];
+            return toLowerCase(value) !== toLowerCase(range[0]);
         },
         'valid email': function(value) {
             var pattern = new RegExp(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
@@ -20669,12 +20758,29 @@ function Validations() {
         },
     };
 
-    component.date = function(data, options) {
-        if (isNumeric(data) && data > 0 && data < 1000000) {
-            data = validations_HelpersDate.numToDate(data);
+    /**
+     * Timestamp of a date in local time. A number is an Excel serial, and
+     * a date without time is the local midnight, not the UTC midnight of
+     * new Date('YYYY-MM-DD'), so it compares with the date and time the
+     * calendar writes into the cell
+     */
+    const getTime = function(date) {
+        if (isNumeric(date) && date > 0 && date < 1000000) {
+            date = validations_HelpersDate.numToDate(date);
+        } else if (typeof date === 'string') {
+            let d = date.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (d) {
+                let t = new Date(d[1], d[2] - 1, d[3]);
+                // No overflow into the next month: 2023-15-07 is not a date
+                return t.getMonth() === d[2] - 1 && t.getDate() === Number(d[3]) ? t.getTime() : NaN;
+            }
         }
 
-        if (new Date(data) == 'Invalid Date') {
+        return new Date(date).getTime();
+    }
+
+    component.date = function(data, options) {
+        if (isNaN(getTime(data))) {
             return false;
         }
 
@@ -20691,10 +20797,10 @@ function Validations() {
                 return relativeDates[date]().getTime();
             }
 
-            return new Date(date).getTime();
+            return getTime(date);
         });
 
-        return dateCriterias[options.criteria](new Date(data).getTime(), values);
+        return dateCriterias[options.criteria](getTime(data), values);
     }
 
     component.text = function(data, options) {
@@ -23475,7 +23581,7 @@ var jSuites = {
     ...dictionary,
     ...helpers,
     /** Current version */
-    version: '6.3.3',
+    version: '6.5.1',
     /** Bind new extensions to Jsuites */
     setExtensions: function(o) {
         if (typeof(o) == 'object') {
